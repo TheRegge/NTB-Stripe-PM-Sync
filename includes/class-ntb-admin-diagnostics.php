@@ -62,6 +62,15 @@ class Admin_Diagnostics {
 		echo '<div class="wrap">';
 		echo '<h1>Stripe PM Sync Diagnostics</h1>';
 
+		echo '<p>The NTB Stripe PM Sync plugin addresses a bug in the WooCommerce Stripe Gateway. '
+			. 'When a customer adds a replacement card with the same card number '
+			. '(for example, a renewed card with a new expiry date), the Stripe Gateway fails to update '
+			. 'the stored expiry date, leaving customers seeing outdated card details. '
+			. 'This plugin automatically corrects that.</p>';
+		echo '<p>The plugin runs in the background — no action is needed from you or your customers. '
+			. 'This page lets you check the plugin\'s status and look up individual customers\' card data '
+			. 'if you need to investigate an issue.</p>';
+
 		// Success notice after save.
 		if ( isset( $_GET['ntb_saved'] ) ) {
 			echo '<div class="notice notice-success is-dismissible"><p>Settings saved.</p></div>';
@@ -98,6 +107,10 @@ class Admin_Diagnostics {
 
 		// --- Kill Switch Toggle ---
 		echo '<h2>Kill Switch</h2>';
+		echo '<p>When enabled, the plugin actively keeps card details in sync with Stripe. '
+			. 'Uncheck and save to disable it — the plugin will stay installed but won\'t make any changes. '
+			. 'This is useful for troubleshooting or if the upstream bug gets fixed. '
+			. 'Disabling does not delete any data.</p>';
 		echo '<form method="post">';
 		wp_nonce_field( 'ntb_stripe_pm_sync_toggle', 'ntb_stripe_pm_sync_nonce' );
 		echo '<label>';
@@ -111,6 +124,12 @@ class Admin_Diagnostics {
 		// --- User Diagnostics ---
 		echo '<hr />';
 		echo '<h2>User Diagnostics</h2>';
+		echo '<p>Enter a customer\'s WordPress user ID or email address to view their saved card data. '
+			. 'The token table compares what WooCommerce has stored against what Stripe reports. '
+			. 'Rows marked <strong>STALE</strong> indicate a mismatch — the plugin will fix these '
+			. 'automatically on the customer\'s next visit to their payment methods page.</p>';
+		echo '<p>If WooCommerce Subscriptions is active, a subscriptions table will also appear showing '
+			. 'whether each subscription is pointing to a valid card in Stripe.</p>';
 		echo '<form method="get">';
 		echo '<input type="hidden" name="page" value="ntb-stripe-pm-sync" />';
 		$ntb_user_input = isset( $_GET['ntb_user'] ) ? sanitize_text_field( wp_unslash( $_GET['ntb_user'] ) ) : '';
