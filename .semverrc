@@ -1,0 +1,18 @@
+{
+  "project_type": "wordpress-plugin",
+  "version_files": [
+    {
+      "path": "ntb-stripe-pm-sync.php",
+      "pattern": "\\* Version:\\s+([0-9.]+(?:-[a-zA-Z0-9.]+)?)",
+      "replacement": " * Version:     $VERSION"
+    },
+    {
+      "path": "ntb-stripe-pm-sync.php",
+      "pattern": "define\\(\\s*'NTB_STRIPE_PM_SYNC_VERSION',\\s*'([0-9.]+(?:-[a-zA-Z0-9.]+)?)'\\s*\\)",
+      "replacement": "define( 'NTB_STRIPE_PM_SYNC_VERSION', '$VERSION' )"
+    }
+  ],
+  "git_tag_prefix": "v",
+  "auto_commit": false,
+  "commit_message_template": "chore: bump version to $VERSION"
+}
