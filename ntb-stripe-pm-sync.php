@@ -16,6 +16,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'NTB_STRIPE_PM_SYNC_VERSION', '1.0.0' );
 define( 'NTB_STRIPE_PM_SYNC_DIR', plugin_dir_path( __FILE__ ) );
 
+// Priority 20: WC_Stripe is loaded inside the Stripe plugin's own plugins_loaded
+// callback at priority 10, so we must run after it.
 add_action( 'plugins_loaded', function () {
 	if ( ! class_exists( 'WooCommerce' ) ) {
 		return;
@@ -29,4 +31,4 @@ add_action( 'plugins_loaded', function () {
 
 	new NTB\StripePMSync\Token_Refresher();
 	new NTB\StripePMSync\Admin_Diagnostics();
-} );
+}, 20 );
