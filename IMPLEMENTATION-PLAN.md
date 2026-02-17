@@ -52,17 +52,17 @@
 - Notes: Uses PRG (Post-Redirect-Get) pattern for kill switch form. `derive_card_type()` duplicated from Token_Refresher for staleness comparison (small helper, not worth abstracting). Subscription table gracefully hidden when WCS not active.
 
 ## Phase 5 – Testing Verification
-- [ ] Validate Scenario A (expiry update)
-- [ ] Validate Scenario B (multiple attempts)
-- [ ] Validate Scenario C (subscription propagation)
-- [ ] Validate Scenario D (different card numbers)
-- [ ] Validate Scenario E (stale metadata secondary hook)
-- [ ] Validate Scenario F (delete behavior)
-- [ ] Validate Scenario G (admin diagnostics page)
-- [ ] Validate Scenario H (kill switch behavior)
-- [ ] Validate Scenario I (conservative PM ID rule)
-- [ ] Validate Scenario J (plugin deactivation safety)
-- Notes:
+- [x] Validate Scenario A (expiry update)
+- [x] Validate Scenario B (multiple attempts)
+- [x] Validate Scenario C (subscription propagation)
+- [x] Validate Scenario D (different card numbers)
+- [x] Validate Scenario E (stale metadata secondary hook)
+- [x] Validate Scenario F (delete behavior)
+- [x] Validate Scenario G (admin diagnostics page)
+- [x] Validate Scenario H (kill switch behavior)
+- [x] Validate Scenario I (conservative PM ID rule)
+- [x] Validate Scenario J (plugin deactivation safety)
+- Notes: All 10 scenarios PASS. Scenario I code-verified (not live-tested). Scenario A required 3 fix iterations to resolve a timing/execution-order bug. See TESTING-LOG.md for full details.
 
 ---
 

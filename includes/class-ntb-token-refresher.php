@@ -24,6 +24,11 @@ class Token_Refresher {
 	 * with an existing WC token, updates the token's metadata and (safely) its
 	 * Stripe PM ID, plus any affected subscription _stripe_source_id references.
 	 *
+	 * Subscription updates run unconditionally on fingerprint match because the
+	 * Stripe gateway and our secondary hook may have already updated the token's
+	 * PM ID and metadata before this action fires. Subscriptions store
+	 * _stripe_source_id independently and must always be checked.
+	 *
 	 * @param int      $user_id                WordPress user ID.
 	 * @param \stdClass $payment_method_object  Full Stripe PM object.
 	 */
@@ -53,6 +58,7 @@ class Token_Refresher {
 			}
 
 			$fingerprint = $payment_method_object->card->fingerprint;
+			$new_pm_id   = $payment_method_object->id;
 
 			// Retrieve existing WC tokens for this user (explicit limit, not get_customer_tokens).
 			$tokens = \WC_Payment_Tokens::get_tokens( [
@@ -78,98 +84,96 @@ class Token_Refresher {
 				return;
 			}
 
-			// Determine new metadata values.
-			$new_pm_id     = $payment_method_object->id;
+			$this->log(
+				'Fingerprint match on token #' . $matching_token->get_id()
+				. ' for user ' . $user_id
+				. ' — new PM: ' . $new_pm_id
+				. ', fingerprint: ' . $fingerprint
+			);
+
+			// Determine new metadata values from the incoming PM.
 			$new_exp_month = str_pad( $payment_method_object->card->exp_month, 2, '0', STR_PAD_LEFT );
 			$new_exp_year  = (string) $payment_method_object->card->exp_year;
 			$new_last4     = $payment_method_object->card->last4;
 			$new_card_type = $this->derive_card_type( $payment_method_object );
 
-			// Store old values for comparison and logging.
-			$old_pm_id     = $matching_token->get_token();
+			// Step A: Update subscriptions that reference any older PM for this card.
+			// This runs unconditionally because the Stripe gateway updates the
+			// token PM ID and our secondary hook fixes metadata before this action
+			// fires — so the token may already be fully up to date, but
+			// subscriptions still point to an old PM.
+			$stripe_customer_id = isset( $payment_method_object->customer )
+				? $payment_method_object->customer
+				: '';
+
+			$subs_updated = true;
+			try {
+				$subs_updated = $this->update_subscriptions(
+					$user_id,
+					$new_pm_id,
+					$stripe_customer_id,
+					$fingerprint
+				);
+			} catch ( \Exception $e ) {
+				$subs_updated = false;
+				$this->log_error( 'Subscription update threw exception: ' . $e->getMessage() );
+			}
+
+			// Step B: Update display metadata if stale (idempotent — may already
+			// be correct if the secondary hook ran earlier in this request).
 			$old_exp_month = $matching_token->get_expiry_month();
 			$old_exp_year  = $matching_token->get_expiry_year();
 			$old_last4     = $matching_token->get_last4();
 			$old_card_type = $matching_token->get_card_type();
 
-			// Check if any field actually differs.
-			$needs_update = (
-				$old_pm_id !== $new_pm_id
-				|| $old_exp_month !== $new_exp_month
+			$metadata_changed = (
+				$old_exp_month !== $new_exp_month
 				|| $old_exp_year !== $new_exp_year
 				|| $old_last4 !== $new_last4
 				|| $old_card_type !== $new_card_type
 			);
 
-			// Auto-idle: if all 5 fields match and auto-idle is enabled, upstream fixed it.
-			if ( defined( 'NTB_STRIPE_PM_SYNC_AUTO_IDLE' ) && NTB_STRIPE_PM_SYNC_AUTO_IDLE ) {
-				if ( ! $needs_update ) {
-					$this->log( 'Auto-idle: upstream appears to have fixed metadata refresh — skipping mutations' );
-					return;
-				}
+			if ( $metadata_changed ) {
+				$matching_token->set_expiry_month( $payment_method_object->card->exp_month );
+				$matching_token->set_expiry_year( $payment_method_object->card->exp_year );
+				$matching_token->set_last4( $new_last4 );
+				$matching_token->set_card_type( $new_card_type );
 			}
 
-			if ( ! $needs_update ) {
-				$this->log( 'Token already up to date for fingerprint ' . $fingerprint );
-				return;
-			}
+			// Step C: Update token PM ID if different (conservative rule — only
+			// change if subscription updates succeeded).
+			$pm_id_changed = ( $matching_token->get_token() !== $new_pm_id );
 
-			$this->log(
-				'Fingerprint match detected for user ' . $user_id
-				. ' — old PM: ' . $old_pm_id . ', new PM: ' . $new_pm_id
-				. ', fingerprint: ' . $fingerprint
-			);
-
-			// Step A: Try to update subscriptions FIRST, before changing the token PM ID.
-			$subs_updated  = true;
-			$pm_id_changed = ( $old_pm_id !== $new_pm_id );
-
-			if ( $pm_id_changed ) {
-				$stripe_customer_id = isset( $payment_method_object->customer )
-					? $payment_method_object->customer
-					: '';
-
-				try {
-					$subs_updated = $this->update_subscriptions(
-						$user_id,
-						$old_pm_id,
-						$new_pm_id,
-						$stripe_customer_id
-					);
-				} catch ( \Exception $e ) {
-					$subs_updated = false;
-					$this->log_error( 'Subscription update threw exception: ' . $e->getMessage() );
-				}
-			}
-
-			// Step B: Always update display metadata (even if subscription update failed).
-			$matching_token->set_expiry_month( $payment_method_object->card->exp_month );
-			$matching_token->set_expiry_year( $payment_method_object->card->exp_year );
-			$matching_token->set_last4( $new_last4 );
-			$matching_token->set_card_type( $new_card_type );
-
-			// Step C: Only change the token PM ID if subscriptions were successfully updated.
 			if ( $pm_id_changed ) {
 				if ( $subs_updated ) {
 					$matching_token->set_token( $new_pm_id );
-					$this->log( 'Token PM ID updated from ' . $old_pm_id . ' to ' . $new_pm_id );
+					$this->log( 'Token PM ID updated to ' . $new_pm_id );
 				} else {
 					$this->log_error(
-						'Skipping token PM ID change from ' . $old_pm_id . ' to ' . $new_pm_id
+						'Skipping token PM ID change to ' . $new_pm_id
 						. ' because subscription update failed — display metadata updated, PM ID retained for renewal safety'
 					);
 				}
 			}
 
-			// Step D: Single save after all field updates.
-			$matching_token->save();
+			// Step D: Save if anything changed.
+			if ( $metadata_changed || $pm_id_changed ) {
+				$matching_token->save();
+				$this->log(
+					'Token #' . $matching_token->get_id() . ' saved'
+					. ' — expiry: ' . $old_exp_month . '/' . $old_exp_year . ' → ' . $new_exp_month . '/' . $new_exp_year
+					. ', last4: ' . $old_last4 . ' → ' . $new_last4
+					. ', card_type: ' . $old_card_type . ' → ' . $new_card_type
+				);
+			} else {
+				$this->log( 'Token #' . $matching_token->get_id() . ' metadata already up to date' );
 
-			$this->log(
-				'Token #' . $matching_token->get_id() . ' updated'
-				. ' — expiry: ' . $old_exp_month . '/' . $old_exp_year . ' → ' . $new_exp_month . '/' . $new_exp_year
-				. ', last4: ' . $old_last4 . ' → ' . $new_last4
-				. ', card_type: ' . $old_card_type . ' → ' . $new_card_type
-			);
+				// Auto-idle: token metadata + PM ID both correct already. If
+				// subscriptions also needed no updates, upstream may have fixed it.
+				if ( defined( 'NTB_STRIPE_PM_SYNC_AUTO_IDLE' ) && NTB_STRIPE_PM_SYNC_AUTO_IDLE ) {
+					$this->log( 'Auto-idle: token already correct — upstream may have fixed the refresh bug' );
+				}
+			}
 
 		} catch ( \Exception $e ) {
 			$this->log_error( 'Primary hook exception: ' . $e->getMessage() );
@@ -313,19 +317,20 @@ class Token_Refresher {
 	}
 
 	/**
-	 * Updates _stripe_source_id on all active subscriptions that reference the old PM.
+	 * Updates _stripe_source_id on all active subscriptions where the current
+	 * PM has the same card fingerprint as the incoming PM.
+	 *
+	 * Uses fingerprint matching exclusively (via Stripe API) so it catches
+	 * subscriptions stuck on any older PM for the same physical card, not just
+	 * the immediately previous one.
 	 *
 	 * @param int    $user_id             WordPress user ID.
-	 * @param string $old_pm_id           Old Stripe PM ID (e.g., pm_xxx).
 	 * @param string $new_pm_id           New Stripe PM ID.
 	 * @param string $stripe_customer_id  Stripe customer ID (e.g., cus_xxx).
+	 * @param string $fingerprint         Card fingerprint for matching.
 	 * @return bool True on full success, false if any subscription could not be updated.
 	 */
-	private function update_subscriptions( $user_id, $old_pm_id, $new_pm_id, $stripe_customer_id ) {
-		if ( $old_pm_id === $new_pm_id ) {
-			return true;
-		}
-
+	private function update_subscriptions( $user_id, $new_pm_id, $stripe_customer_id, $fingerprint ) {
 		// WooCommerce Subscriptions not installed — no subscriptions to update, no-op success.
 		if ( ! function_exists( 'wcs_get_users_subscriptions' ) ) {
 			$this->log( 'WooCommerce Subscriptions not available — skipping subscription update' );
@@ -342,11 +347,22 @@ class Token_Refresher {
 			}
 
 			$sub_source_id = $subscription->get_meta( '_stripe_source_id', true );
-			if ( $sub_source_id !== $old_pm_id ) {
+			$sub_id        = $subscription->get_id();
+
+			// Already points to the new PM — nothing to do.
+			if ( empty( $sub_source_id ) || $sub_source_id === $new_pm_id ) {
 				continue;
 			}
 
-			$sub_id = $subscription->get_id();
+			// Verify via Stripe API that this subscription's PM has the same fingerprint.
+			if ( ! $this->pm_has_fingerprint( $sub_source_id, $fingerprint ) ) {
+				continue;
+			}
+
+			$this->log(
+				'Subscription #' . $sub_id . ' references PM ' . $sub_source_id
+				. ' with matching fingerprint — updating to ' . $new_pm_id
+			);
 
 			try {
 				// Preferred: use WC Subscriptions API for proper audit trail.
@@ -372,7 +388,7 @@ class Token_Refresher {
 					$subscription->save();
 				}
 
-				$this->log( 'Updated subscription #' . $sub_id . ' _stripe_source_id from ' . $old_pm_id . ' to ' . $new_pm_id );
+				$this->log( 'Updated subscription #' . $sub_id . ' _stripe_source_id from ' . $sub_source_id . ' to ' . $new_pm_id );
 			} catch ( \Exception $e ) {
 				$this->log_error( 'Failed to update subscription #' . $sub_id . ': ' . $e->getMessage() );
 				$all_succeeded = false;
@@ -380,6 +396,48 @@ class Token_Refresher {
 		}
 
 		return $all_succeeded;
+	}
+
+	/**
+	 * Checks whether a Stripe PM has the given fingerprint.
+	 *
+	 * Used to identify older PMs for the same physical card when a subscription
+	 * is stuck on a PM that predates the current one.
+	 *
+	 * @param string $pm_id       Stripe PM ID to check.
+	 * @param string $fingerprint Expected card fingerprint.
+	 * @return bool True if the PM exists in Stripe and has the matching fingerprint.
+	 */
+	private function pm_has_fingerprint( $pm_id, $fingerprint ) {
+		static $cache = [];
+
+		$cache_key = $pm_id . ':' . $fingerprint;
+		if ( isset( $cache[ $cache_key ] ) ) {
+			return $cache[ $cache_key ];
+		}
+
+		if ( ! class_exists( 'WC_Stripe_API' ) ) {
+			$cache[ $cache_key ] = false;
+			return false;
+		}
+
+		try {
+			$response = \WC_Stripe_API::request( [], 'payment_methods/' . $pm_id, 'GET' );
+
+			if ( is_wp_error( $response ) || ! empty( $response->error ) ) {
+				$this->log( 'Could not retrieve PM ' . $pm_id . ' from Stripe for fingerprint check' );
+				$cache[ $cache_key ] = false;
+				return false;
+			}
+
+			$result            = isset( $response->card->fingerprint ) && $response->card->fingerprint === $fingerprint;
+			$cache[ $cache_key ] = $result;
+			return $result;
+		} catch ( \Exception $e ) {
+			$this->log_error( 'Fingerprint check failed for PM ' . $pm_id . ': ' . $e->getMessage() );
+			$cache[ $cache_key ] = false;
+			return false;
+		}
 	}
 
 	/**
