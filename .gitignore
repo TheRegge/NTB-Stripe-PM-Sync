@@ -1,2 +1,5 @@
 # Semver cache (auto-generated)
 .semver-cache.json
+
+# Build artifacts
+releases/
