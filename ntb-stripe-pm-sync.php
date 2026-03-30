@@ -2,7 +2,7 @@
 /**
  * Plugin Name: NTB Stripe PM Sync
  * Description: Patches a metadata refresh bug in WooCommerce Stripe Gateway fingerprint deduplication.
- * Version:     1.0.0
+ * Version:     1.0.1
  * Author:      NTB Insiders
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'NTB_STRIPE_PM_SYNC_VERSION', '1.0.0' );
+define( 'NTB_STRIPE_PM_SYNC_VERSION', '1.0.1' );
 define( 'NTB_STRIPE_PM_SYNC_DIR', plugin_dir_path( __FILE__ ) );
 
 // Priority 20: WC_Stripe is loaded inside the Stripe plugin's own plugins_loaded
