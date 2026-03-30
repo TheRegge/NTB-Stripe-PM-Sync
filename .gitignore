@@ -3,3 +3,6 @@
 
 # Build artifacts
 releases/
+
+# misc
+.timetrack.json
