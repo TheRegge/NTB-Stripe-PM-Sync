@@ -356,6 +356,11 @@ class Token_Refresher {
 
 			// Verify via Stripe API that this subscription's PM has the same fingerprint.
 			if ( ! $this->pm_has_fingerprint( $sub_source_id, $fingerprint ) ) {
+				$this->log(
+					'Subscription #' . $sub_id . ' references PM ' . $sub_source_id
+					. ' — could not verify fingerprint match, skipping (old PM may be unretrievable from Stripe)'
+				);
+				$all_succeeded = false;
 				continue;
 			}
 
